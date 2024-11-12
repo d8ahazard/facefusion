@@ -227,7 +227,7 @@ def process_frame(inputs : LipSyncerInputs) -> VisionFrame:
 	return target_vision_frame
 
 
-def process_frames(source_paths : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
+def process_frames(source_paths : List[str], source_paths_2 : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
 	reference_faces = get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else None
 	source_audio_path = get_first(filter_audio_paths(source_paths))
 	temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'), state_manager.get_item('output_video_fps'))
@@ -262,9 +262,10 @@ def process_image(source_paths : List[str], target_path : str, output_path : str
 	write_image(output_path, output_vision_frame)
 
 
-def process_video(source_paths : List[str], temp_frame_paths : List[str]) -> None:
+def process_video(source_paths : List[str], source_paths_2: List[str], temp_frame_paths : List[str]) -> None:
 	source_audio_paths = filter_audio_paths(state_manager.get_item('source_paths'))
 	temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'), state_manager.get_item('output_video_fps'))
 	for source_audio_path in source_audio_paths:
 		read_static_voice(source_audio_path, temp_video_fps)
-	processors.multi_process_frames(source_paths, temp_frame_paths, process_frames)
+	# TODO: Determine if we can make this support multi-voice syncing?
+	processors.multi_process_frames(source_paths, None, temp_frame_paths, process_frames)

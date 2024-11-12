@@ -14,7 +14,7 @@ from facefusion.face_analyser import get_many_faces, get_one_face
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_occlusion_mask, create_static_box_mask
 from facefusion.face_selector import find_similar_faces, sort_and_filter_faces
-from facefusion.face_store import get_reference_faces
+from facefusion.face_store import get_reference_faces, get_reference_faces_multi
 from facefusion.filesystem import in_directory, is_image, is_video, resolve_relative_path, same_file_extension
 from facefusion.processors import choices as processors_choices
 from facefusion.processors.typing import FaceEnhancerInputs
@@ -348,6 +348,7 @@ def get_reference_frame(source_face : Face, target_face : Face, temp_vision_fram
 
 def process_frame(inputs : FaceEnhancerInputs) -> VisionFrame:
 	reference_faces = inputs.get('reference_faces')
+	reference_faces_2 = inputs.get('reference_faces_2')
 	target_vision_frame = inputs.get('target_vision_frame')
 	many_faces = sort_and_filter_faces(get_many_faces([ target_vision_frame ]))
 
@@ -364,11 +365,19 @@ def process_frame(inputs : FaceEnhancerInputs) -> VisionFrame:
 		if similar_faces:
 			for similar_face in similar_faces:
 				target_vision_frame = enhance_face(similar_face, target_vision_frame)
+		if reference_faces_2:
+			similar_faces_2 = find_similar_faces(many_faces, reference_faces_2, state_manager.get_item('reference_face_distance'))
+			if similar_faces_2:
+				for similar_face_2 in similar_faces_2:
+					target_vision_frame = enhance_face(similar_face_2, target_vision_frame)
 	return target_vision_frame
 
 
-def process_frames(source_path : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
-	reference_faces = get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else None
+def process_frames(source_path : List[str], source_paths_2 : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
+	reference_faces = None
+	reference_faces_2 = None
+	if 'reference' in state_manager.get_item('face_selector_mode'):
+		reference_faces, reference_faces_2 = get_reference_faces_multi()
 
 	for queue_payload in process_manager.manage(queue_payloads):
 		target_vision_path = queue_payload['frame_path']
@@ -376,6 +385,7 @@ def process_frames(source_path : List[str], queue_payloads : List[QueuePayload],
 		output_vision_frame = process_frame(
 		{
 			'reference_faces': reference_faces,
+			'reference_faces_2': reference_faces_2,
 			'target_vision_frame': target_vision_frame
 		})
 		write_image(target_vision_path, output_vision_frame)
@@ -383,15 +393,19 @@ def process_frames(source_path : List[str], queue_payloads : List[QueuePayload],
 
 
 def process_image(source_path : str, target_path : str, output_path : str) -> None:
-	reference_faces = get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else None
+	reference_faces = None
+	reference_faces_2 = None
+	if 'reference' in state_manager.get_item('face_selector_mode'):
+		reference_faces, reference_faces_2 = get_reference_faces_multi()
 	target_vision_frame = read_static_image(target_path)
 	output_vision_frame = process_frame(
 	{
 		'reference_faces': reference_faces,
+		'reference_faces_2': reference_faces_2,
 		'target_vision_frame': target_vision_frame
 	})
 	write_image(output_path, output_vision_frame)
 
 
-def process_video(source_paths : List[str], temp_frame_paths : List[str]) -> None:
-	processors.multi_process_frames(None, temp_frame_paths, process_frames)
+def process_video(source_paths : List[str], source_paths_2 : List[str], temp_frame_paths : List[str]) -> None:
+	processors.multi_process_frames(None, None, temp_frame_paths, process_frames)

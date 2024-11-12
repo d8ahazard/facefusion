@@ -49,7 +49,11 @@ def get_processors_modules(processors : List[str]) -> List[ModuleType]:
 
 	for processor in processors:
 		processor_module = load_processor_module(processor)
-		processor_modules.append(processor_module)
+		# Debugger doesn't work if we do it after swapping. ;)
+		if 'face_debugger' in processor_module.__name__:
+			processor_modules.insert(0, processor_module)
+		else:
+			processor_modules.append(processor_module)
 	return processor_modules
 
 
@@ -59,7 +63,7 @@ def clear_processors_modules(processors : List[str]) -> None:
 		processor_module.clear_inference_pool()
 
 
-def multi_process_frames(source_paths : List[str], temp_frame_paths : List[str], process_frames : ProcessFrames) -> None:
+def multi_process_frames(source_paths : List[str], source_paths_2: List[str], temp_frame_paths : List[str], process_frames : ProcessFrames) -> None:
 	queue_payloads = create_queue_payloads(temp_frame_paths)
 	with tqdm(total = len(queue_payloads), desc = wording.get('processing'), unit = 'frame', ascii = ' =', disable = state_manager.get_item('log_level') in [ 'warn', 'error' ]) as progress:
 		progress.set_postfix(
@@ -74,7 +78,7 @@ def multi_process_frames(source_paths : List[str], temp_frame_paths : List[str],
 			queue_per_future = max(len(queue_payloads) // state_manager.get_item('execution_thread_count') * state_manager.get_item('execution_queue_count'), 1)
 
 			while not queue.empty():
-				future = executor.submit(process_frames, source_paths, pick_queue(queue, queue_per_future), progress.update)
+				future = executor.submit(process_frames, source_paths, source_paths_2, pick_queue(queue, queue_per_future), progress.update)
 				futures.append(future)
 
 			for future_done in as_completed(futures):

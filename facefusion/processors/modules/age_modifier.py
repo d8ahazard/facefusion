@@ -238,7 +238,7 @@ def process_frame(inputs : AgeModifierInputs) -> VisionFrame:
 	return target_vision_frame
 
 
-def process_frames(source_path : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
+def process_frames(source_path : List[str], source_paths_2 : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
 	reference_faces = get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else None
 
 	for queue_payload in process_manager.manage(queue_payloads):
@@ -264,5 +264,5 @@ def process_image(source_path : str, target_path : str, output_path : str) -> No
 	write_image(output_path, output_vision_frame)
 
 
-def process_video(source_paths : List[str], temp_frame_paths : List[str]) -> None:
-	processors.multi_process_frames(None, temp_frame_paths, process_frames)
+def process_video(source_paths : List[str], source_paths_2 : List[str], temp_frame_paths : List[str]) -> None:
+	processors.multi_process_frames(None, None, temp_frame_paths, process_frames)

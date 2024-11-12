@@ -30,6 +30,7 @@ ExpressionRestorerInputs = TypedDict('ExpressionRestorerInputs',
 FaceDebuggerInputs = TypedDict('FaceDebuggerInputs',
 {
 	'reference_faces' : FaceSet,
+	'reference_faces_2': FaceSet,
 	'target_vision_frame' : VisionFrame
 })
 FaceEditorInputs = TypedDict('FaceEditorInputs',
@@ -40,12 +41,15 @@ FaceEditorInputs = TypedDict('FaceEditorInputs',
 FaceEnhancerInputs = TypedDict('FaceEnhancerInputs',
 {
 	'reference_faces' : FaceSet,
+	'reference_faces_2': FaceSet,
 	'target_vision_frame' : VisionFrame
 })
 FaceSwapperInputs = TypedDict('FaceSwapperInputs',
 {
 	'reference_faces' : FaceSet,
 	'source_face' : Face,
+	'reference_faces_2': FaceSet,
+	'source_face_2': Face,
 	'target_vision_frame' : VisionFrame
 })
 FrameColorizerInputs = TypedDict('FrameColorizerInputs',

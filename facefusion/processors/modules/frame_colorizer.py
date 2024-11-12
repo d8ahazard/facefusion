@@ -258,7 +258,7 @@ def process_frame(inputs : FrameColorizerInputs) -> VisionFrame:
 	return colorize_frame(target_vision_frame)
 
 
-def process_frames(source_paths : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
+def process_frames(source_paths : List[str], source_paths_2 : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
 	for queue_payload in process_manager.manage(queue_payloads):
 		target_vision_path = queue_payload['frame_path']
 		target_vision_frame = read_image(target_vision_path)
@@ -279,5 +279,5 @@ def process_image(source_paths : List[str], target_path : str, output_path : str
 	write_image(output_path, output_vision_frame)
 
 
-def process_video(source_paths : List[str], temp_frame_paths : List[str]) -> None:
-	processors.multi_process_frames(None, temp_frame_paths, process_frames)
+def process_video(source_paths : List[str], source_paths_2 : List[str], temp_frame_paths : List[str]) -> None:
+	processors.multi_process_frames(None, None, temp_frame_paths, process_frames)

@@ -1,7 +1,9 @@
+import os
 from argparse import ArgumentParser
 from typing import List, Tuple
 
 import numpy
+import numpy as np
 
 import facefusion.jobs.job_manager
 import facefusion.jobs.job_store
@@ -14,7 +16,7 @@ from facefusion.face_analyser import get_average_face, get_many_faces, get_one_f
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_occlusion_mask, create_region_mask, create_static_box_mask
 from facefusion.face_selector import find_similar_faces, sort_and_filter_faces
-from facefusion.face_store import get_reference_faces
+from facefusion.face_store import get_reference_faces, get_reference_faces_multi
 from facefusion.filesystem import filter_image_paths, has_image, in_directory, is_image, is_video, resolve_relative_path, same_file_extension
 from facefusion.inference_manager import get_static_model_initializer
 from facefusion.processors import choices as processors_choices
@@ -371,7 +373,7 @@ def post_process() -> None:
 		face_recognizer.clear_inference_pool()
 
 
-def swap_face(source_face : Face, target_face : Face, temp_vision_frame : VisionFrame) -> VisionFrame:
+def swap_face(source_face : Face, target_face : Face, temp_vision_frame : VisionFrame, source_face_2: Face = None, target_face_2: Face = None) -> VisionFrame:
 	model_template = get_model_options().get('template')
 	model_size = get_model_options().get('size')
 	pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
@@ -402,6 +404,95 @@ def swap_face(source_face : Face, target_face : Face, temp_vision_frame : Vision
 
 	crop_mask = numpy.minimum.reduce(crop_masks).clip(0, 1)
 	temp_vision_frame = paste_back(temp_vision_frame, crop_vision_frame, crop_mask, affine_matrix)
+	return temp_vision_frame
+
+
+def swap_faces(source_faces, target_faces, temp_vision_frame) -> VisionFrame:
+	import numpy  # Ensure numpy is imported
+	model_template = get_model_options().get('template')
+	model_size = get_model_options().get('size')
+	pixel_boost_size = unpack_resolution(state_manager.get_item('face_swapper_pixel_boost'))
+	pixel_boost_total = pixel_boost_size[0] // model_size[0]
+	face_mask_types = state_manager.get_item('face_mask_types')
+	face_mask_blur = state_manager.get_item('face_mask_blur')
+	face_mask_padding = state_manager.get_item('face_mask_padding')  # Tuple[int, int, int, int]
+	face_mask_regions = state_manager.get_item('face_mask_regions')
+
+	# Unpack the face_mask_padding tuple
+	left_pad, top_pad, right_pad, bottom_pad = face_mask_padding
+
+	for source_face, target_face in zip(source_faces, target_faces):
+		# Determine the region to process (crop around the face)
+		x, y, w, h = target_face.bounding_box  # x, y, w, h might be floats
+
+		# Ensure x, y, w, h are integers
+		x = int(round(x))
+		y = int(round(y))
+		w = int(round(w))
+		h = int(round(h))
+
+		x1 = max(0, x - left_pad)
+		y1 = max(0, y - top_pad)
+		x2 = min(temp_vision_frame.shape[1], x + w + right_pad)
+		y2 = min(temp_vision_frame.shape[0], y + h + bottom_pad)
+
+		# Ensure x1, x2, y1, y2 are integers
+		x1 = int(round(x1))
+		y1 = int(round(y1))
+		x2 = int(round(x2))
+		y2 = int(round(y2))
+
+		face_crop = temp_vision_frame[y1:y2, x1:x2].copy()
+
+		# Adjust landmarks for the cropped region
+		landmarks = target_face.landmark_set.get('5/68') - numpy.array([x1, y1])
+
+		# Warp the face_crop to the model_template
+		crop_vision_frame, affine_matrix = warp_face_by_face_landmark_5(
+			face_crop, landmarks, model_template, pixel_boost_size
+		)
+
+		# Create masks
+		crop_masks = []
+		if 'box' in face_mask_types:
+			box_mask = create_static_box_mask(
+				crop_vision_frame.shape[:2][::-1], face_mask_blur, face_mask_padding
+			)
+			crop_masks.append(box_mask)
+
+		if 'occlusion' in face_mask_types:
+			occlusion_mask = create_occlusion_mask(crop_vision_frame)
+			crop_masks.append(occlusion_mask)
+
+		# Pixel boost and face swapping
+		pixel_boost_vision_frames = implode_pixel_boost(
+			crop_vision_frame, pixel_boost_total, model_size
+		)
+		temp_frames = []
+		for pixel_boost_vision_frame in pixel_boost_vision_frames:
+			pixel_boost_vision_frame = prepare_crop_frame(pixel_boost_vision_frame)
+			pixel_boost_vision_frame = forward_swap_face(source_face, pixel_boost_vision_frame)
+			pixel_boost_vision_frame = normalize_crop_frame(pixel_boost_vision_frame)
+			temp_frames.append(pixel_boost_vision_frame)
+
+		crop_vision_frame = explode_pixel_boost(
+			temp_frames, pixel_boost_total, model_size, pixel_boost_size
+		)
+
+		if 'region' in face_mask_types:
+			region_mask = create_region_mask(crop_vision_frame, face_mask_regions)
+			crop_masks.append(region_mask)
+
+		crop_mask = numpy.minimum.reduce(crop_masks).clip(0, 1)
+
+		# Paste back the processed face into the original frame
+		pasted_face = paste_back(
+			face_crop, crop_vision_frame, crop_mask, affine_matrix
+		)
+
+		# Ensure the pasted face dimensions match the target area
+		temp_vision_frame[y1:y2, x1:x2] = pasted_face
+
 	return temp_vision_frame
 
 
@@ -520,17 +611,39 @@ def process_frame(inputs : FaceSwapperInputs) -> VisionFrame:
 			target_vision_frame = swap_face(source_face, target_face, target_vision_frame)
 	if state_manager.get_item('face_selector_mode') == 'reference':
 		similar_faces = find_similar_faces(many_faces, reference_faces, state_manager.get_item('reference_face_distance'))
+		source_faces = []
+		tgt_faces = []
 		if similar_faces:
 			for similar_face in similar_faces:
-				target_vision_frame = swap_face(source_face, similar_face, target_vision_frame)
+				tgt_faces.append(similar_face)
+				source_faces.append(source_face)
+				#target_vision_frame = swap_face(source_face, similar_face, target_vision_frame)
+		reference_faces_2 = inputs.get('reference_faces_2')
+		source_face_2 = inputs.get('source_face_2')
+		if reference_faces_2 and source_face_2:
+			similar_faces_2 = find_similar_faces(many_faces, reference_faces_2, state_manager.get_item('reference_face_distance'))
+			if similar_faces_2:
+				for similar_face_2 in similar_faces_2:
+					tgt_faces.append(similar_face_2)
+					source_faces.append(source_face_2)
+		target_vision_frame = swap_faces(source_faces, tgt_faces, target_vision_frame)
 	return target_vision_frame
 
 
-def process_frames(source_paths : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
-	reference_faces = get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else None
+def process_frames(source_paths : List[str], source_paths_2 : List[str], queue_payloads : List[QueuePayload], update_progress : UpdateProgress) -> None:
+	reference_faces = None
+	reference_faces_2 = None
+	if 'reference' in state_manager.get_item('face_selector_mode'):
+		reference_faces, reference_faces_2 = get_reference_faces_multi()
 	source_frames = read_static_images(source_paths)
 	source_faces = get_many_faces(source_frames)
 	source_face = get_average_face(source_faces)
+
+	source_face_2 = None
+	if source_paths_2:
+		source_frames_2 = read_static_images(source_paths_2)
+		source_faces_2 = get_many_faces(source_frames_2)
+		source_face_2 = get_average_face(source_faces_2)
 
 	for queue_payload in process_manager.manage(queue_payloads):
 		target_vision_path = queue_payload['frame_path']
@@ -538,27 +651,37 @@ def process_frames(source_paths : List[str], queue_payloads : List[QueuePayload]
 		output_vision_frame = process_frame(
 		{
 			'reference_faces': reference_faces,
+			'reference_faces_2': reference_faces_2,
 			'source_face': source_face,
+			'source_face_2': source_face_2,
 			'target_vision_frame': target_vision_frame
 		})
 		write_image(target_vision_path, output_vision_frame)
 		update_progress(1)
 
 
-def process_image(source_paths : List[str], target_path : str, output_path : str) -> None:
-	reference_faces = get_reference_faces() if 'reference' in state_manager.get_item('face_selector_mode') else None
+def process_image(source_paths : List[str], source_paths_2 : List[str], target_path : str, output_path : str) -> None:
+	reference_faces = None
+	reference_faces_2 = None
+	if 'reference' in state_manager.get_item('face_selector_mode'):
+		reference_faces, reference_faces_2 = get_reference_faces_multi()
 	source_frames = read_static_images(source_paths)
 	source_faces = get_many_faces(source_frames)
 	source_face = get_average_face(source_faces)
+	source_frames_2 = read_static_images(source_paths_2)
+	source_faces_2 = get_many_faces(source_frames_2)
+	source_face_2 = get_average_face(source_faces_2)
 	target_vision_frame = read_static_image(target_path)
 	output_vision_frame = process_frame(
 	{
 		'reference_faces': reference_faces,
+		'reference_faces_2': reference_faces_2,
 		'source_face': source_face,
+		'source_face_2': source_face_2,
 		'target_vision_frame': target_vision_frame
 	})
 	write_image(output_path, output_vision_frame)
 
 
-def process_video(source_paths : List[str], temp_frame_paths : List[str]) -> None:
-	processors.multi_process_frames(source_paths, temp_frame_paths, process_frames)
+def process_video(source_paths : List[str], source_paths_2 : List[str], temp_frame_paths : List[str]) -> None:
+	processors.multi_process_frames(source_paths, source_paths_2, temp_frame_paths, process_frames)

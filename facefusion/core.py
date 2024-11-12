@@ -13,7 +13,8 @@ from facefusion.download import conditional_download_hashes, conditional_downloa
 from facefusion.exit_helper import conditional_exit, graceful_exit, hard_exit
 from facefusion.face_analyser import get_average_face, get_many_faces, get_one_face
 from facefusion.face_selector import sort_and_filter_faces
-from facefusion.face_store import append_reference_face, clear_reference_faces, get_reference_faces
+from facefusion.face_store import append_reference_face, clear_reference_faces, get_reference_faces, \
+	get_reference_faces_multi
 from facefusion.ffmpeg import copy_image, extract_frames, finalize_image, merge_video, replace_audio, restore_audio
 from facefusion.filesystem import filter_audio_paths, is_image, is_video, list_directory, resolve_relative_path
 from facefusion.jobs import job_helper, job_manager, job_runner
@@ -324,7 +325,10 @@ def process_image(start_time : float) -> ErrorCode:
 	temp_file_path = get_temp_file_path(state_manager.get_item('target_path'))
 	for processor_module in get_processors_modules(state_manager.get_item('processors')):
 		logger.info(wording.get('processing'), processor_module.__name__)
-		processor_module.process_image(state_manager.get_item('source_paths'), temp_file_path, temp_file_path)
+		if 'face_swapper' in processor_module.__name__:
+			processor_module.process_image(state_manager.get_item('source_paths'), state_manager.get_item('source_paths_2'), temp_file_path, temp_file_path)
+		else:
+			processor_module.process_image(state_manager.get_item('source_paths'), temp_file_path, temp_file_path)
 		processor_module.post_process()
 	if is_process_stopping():
 		process_manager.end()
@@ -379,7 +383,7 @@ def process_video(start_time : float) -> ErrorCode:
 	if temp_frame_paths:
 		for processor_module in get_processors_modules(state_manager.get_item('processors')):
 			logger.info(wording.get('processing'), processor_module.__name__)
-			processor_module.process_video(state_manager.get_item('source_paths'), temp_frame_paths)
+			processor_module.process_video(state_manager.get_item('source_paths'), state_manager.get_item('source_paths_2'), temp_frame_paths)
 			processor_module.post_process()
 		if is_process_stopping():
 			return 4
@@ -425,6 +429,7 @@ def process_video(start_time : float) -> ErrorCode:
 	# clear temp
 	logger.debug(wording.get('clearing_temp'), __name__)
 	clear_temp_directory(state_manager.get_item('target_path'))
+	clear_reference_faces()
 	# validate video
 	if is_video(state_manager.get_item('output_path')):
 		seconds = '{:.2f}'.format((time() - start_time))
